@@ -49,3 +49,4 @@ explain每个表对应一条记录，连接查询时出现在前面的是驱动�
 
   
 
+> MySQL 会默认的为Group by c1子句添加Order by c1,如果不想包含GROUP BY 可以显示的写上ORDER BY NULL 
