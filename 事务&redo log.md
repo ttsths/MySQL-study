@@ -75,5 +75,15 @@ redo日志的刷盘时机
 
 ## redo日志文件组
 
-Checkpoint
+Checkpoint：redo日志只是为了系统奔溃后恢复脏页用的，如果对应的脏页已经刷新到磁盘，那么相对应的redo日志就不需要了（通过更新flush链表）checkpoint_lsn增加的形式来标识可以被覆盖的redo日志。
 
+Log Sequeue Number:日志序列号(lsn)
+
+日志首选写入到`log_buffer`中，之后才会被刷新到磁盘上的redo日志文件。通过`flushed_to_disk_lsn`参数来刷新，初始值未`lsn`的初始值**8704**。
+
+## 奔溃恢复
+
+- 确认恢复的起点：redo日志文件组的第一个文件的管理信息中有两个block中选出checkpoint_no比较大的对应的checkpoint_lsn对应的redo日志的checkpoint_offset
+- 确认恢复的终点：`log clock header`中的`LOG_BLOCK_HDR_DATA_LEN`的属性，该属性记录了当前block里面使用了多少字节的空间， 未被填满的永远为512
+- 如何恢复：
+  - 使用哈希表，根据redo日志的`space ID`和`page number`属性计算出散列值（可以算出相同的页），多个相同的散列值(槽)之间使用链表连接
