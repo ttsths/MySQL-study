@@ -16,3 +16,55 @@
 ## undo日志的格式
 
 undo tablespace
+
+Delete update insert 操作对应的undo日志都是针对聚簇索引记录而言
+
+`roll_pointer本质是一个指针，指向记录对应的undo日志`
+
+## FIL_PAGE_UNDO_LOG页面
+
+页类型为FIL_PAGE_UNDO_LOG类型的页面专门用来存储undo日志。
+
+undo日志分为两个大类：TRX_UNDO_INSERT_REC(事务提交之后就删除)，其他类型的undo日志需要为MVCC服务。
+
+### Undo页面链表
+
+**单个事务**的undo页面链表，可能存在`insert undo链表`和`update undo链表`。注意普通表的undo日志和临时表的undo日志分开。
+
+- 当事务执行过程中向普通表插入记录或者执行更新记录主键的操作之后，会分配一个`普通表的insert undo链表`
+- 当事务执行过程中执行删除或者更新普通表中的记录之后，会分配一个`普通表的update undo链表`
+- 当事务执行过程中，向临时表中插入记录或者执行更新记录主键的操作之后，会分配一个`临时表的insert undo链表`
+- 当事务执行过程中执行删除或者更新临时表中的记录之后，会分配一个`临时表的update undo链表`
+
+### undo日志写入过程
+
+分段（表空间里面的逻辑概念），比如一个B+树索引被划分成两个段，一个叶子节点段，一个非叶子节点段，每一个段对应一个`INDOE Entry`结构，该结构包含段ID，表空间、零散页面的页号等等。
+
+### 重用Undo页面
+
+在一个事务的update 操作提交之后，另一个事务重用该提交后的undo日志链表，在之前的日志后面追加。
+
+### 回滚段
+
+每个`Undo页面`链表相当于一个班，而链表`first undo page`相当于班长，可以找到其他`normal undo page`。`Rollback Segment Header`相当于一个会议室。一个会议室相当于一个段（`Rollback Segment`），段内只有一个页面。
+
+`InnoDB有128个回滚段，最大支持128*1024=131072个undo Slot`（只读事务无需分配Undo页面链表，默认事务都是只读事务，执行事务过程中对记录的某些改动时会升级为读写事务）。
+
+`1~32回滚段属于临时表空间`
+
+`0号回滚段属于系统表空间/33~127回滚段属于系统或者自定义Undo表空间`
+
+针对普通表和临时表划分不同种类的`回滚段`的原因：在修改针对普通表的回滚段中的Undo页面时，需要记录对应的redo日志，而修改针对临时表的回滚段中的Undo页面时，不需要记录对应的redo日志。
+
+事务执行过程中分配undo页面链表的完整过程：
+
+- 事务在执行过程中对普通表的记录首次做改动之前，首先会到系统表空间的第`5`号页面中分配一个回滚段（其实就是获取一个`Rollback Segment Header`页面的地址）。一旦某个回滚段被分配给了这个事务，那么之后该事务中再对普通表的记录做改动时，就不会重复分配了。
+- 在分配到回滚段后，首先看一下这个回滚段的两个`cached链表`有没有已经缓存了的`undo slot`，比如如果事务做的是`INSERT`操作，就去回滚段对应的`insert undo cached链表`中看看有没有缓存的`undo slot`；如果事务做的是`DELETE`操作，就去回滚段对应的`update undo cached链表`中看看有没有缓存的`undo slot`。如果有缓存的`undo slot`，那么就把这个缓存的`undo slot`分配给该事务。
+- 如果没有缓存的`undo slot`可供分配，那么就要到`Rollback Segment Header`页面中找一个可用的`undo slot`分配给当前事务。
+  - 从`Rollback Segment Header`页面中分配可用的`undo slot`的方式我们上边也说过了，就是从第`0`个`undo slot`开始，如果该`undo slot`的值为`FIL_NULL`，意味着这个`undo slot`是空闲的，就把这个`undo slot`分配给当前事务，否则查看第`1`个`undo slot`是否满足条件，依次类推，直到最后一个`undo slot`。如果这`1024`个`undo slot`都没有值为`FIL_NULL`的情况，就直接报错喽（一般不会出现这种情况）～
+
+- 找到可用的`undo slot`后，如果该`undo slot`是从`cached链表`中获取的，那么它对应的`Undo Log Segment`已经分配了，否则的话需要重新分配一个`Undo Log Segment`，然后从该`Undo Log Segment`中申请一个页面作为`Undo页面`链表的`first undo page`。
+- 然后事务就可以把`undo日志`写入到上边申请的`Undo页面`链表了！
+
+
+
