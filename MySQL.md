@@ -2,7 +2,11 @@
 typora-root-url: ../blog
 ---
 
-# MySQL （2-9）
+[TOC]
+
+
+
+# MySQL -基础信息（2-9）
 
 ## MySQL安装的重要信息
 
